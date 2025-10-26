@@ -13,7 +13,7 @@
 #rm -rf feeds/packages/net/mosdns
 #rm -rf feeds/packages/net/v2ray-geodata
 
-rm -rf feeds/luci/themes/luci-theme-argon
+# rm -rf feeds/luci/themes/luci-theme-argon
 
 rm -rf feeds/packages/lang/golang
 git clone https://github.com/sbwml/packages_lang_golang -b 23.x feeds/packages/lang/golang
@@ -29,4 +29,4 @@ git clone https://github.com/nhhqgirl/luci-app-poweroff.git package/lean/luci-ap
 # 添加 opentomcat 主题
 git clone --depth=1 https://github.com/nhyoungboy/luci-theme-opentomcat.git package/luci-theme-opentomcat
 
-git clone 18.06 https://github.com/jerrykuku/luci-theme-argon.git package/luci-theme-argon
+# git clone 18.06 https://github.com/jerrykuku/luci-theme-argon.git package/luci-theme-argon
