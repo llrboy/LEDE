@@ -13,7 +13,8 @@
 # 移除要替换的包
 rm -rf feeds/luci/themes/luci-theme-argon
 rm -rf feeds/packages/lang/golang
-git clone https://github.com/sbwml/packages_lang_golang -b 23.x feeds/packages/lang/golang
+git clone https://github.com/sbwml/packages_lang_golang feeds/packages/lang/golang
+# git clone https://github.com/sbwml/packages_lang_golang -b 23.x feeds/packages/lang/golang
 
 # 添加 onliner 插件
 git clone https://github.com/nhhqgirl/luci-app-onliner.git package/lean/luci-app-onliner
