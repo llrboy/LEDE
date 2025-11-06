@@ -13,8 +13,8 @@ orig_version=$(cat "package/lean/default-settings/files/zzz-default-settings" | 
 sed -i "s/${orig_version}/R${date_version} by LERAN/g" package/lean/default-settings/files/zzz-default-settings
 
 # 修改网络设置
-# sed -i 's/192.168.1.1/192.168.81.1/g' package/base-files/files/bin/config_generate
-sed -i 's/192.168.1.1/192.168.81.1/g' package/base-files/luci2/bin/config_generate
+sed -i 's/192.168.1.1/192.168.81.1/g' package/base-files/files/bin/config_generate
+# sed -i 's/192.168.1.1/192.168.81.1/g' package/base-files/luci2/bin/config_generate
 
 # 设置默认主题
 sed -i 's/luci-theme-bootstrap/luci-theme-design/g' feeds/luci/collections/luci-light/Makefile
