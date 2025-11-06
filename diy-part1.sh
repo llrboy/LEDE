@@ -24,5 +24,5 @@ git clone https://github.com/nhhqgirl/luci-app-poweroff.git package/lean/luci-ap
 # 添加主题
 git clone --depth=1 https://github.com/nhyoungboy/luci-theme-opentomcat.git package/luci-theme-opentomcat
 
-git clone --depth=1 -b master https://github.com/jerrykuku/luci-theme-argon package/luci-theme-argon
-
+# git clone --depth=1 -b master https://github.com/jerrykuku/luci-theme-argon package/luci-theme-argon
+git clone -b 18.06 https://github.com/jerrykuku/luci-theme-argon.git package/luci-theme-argon
