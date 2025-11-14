@@ -18,6 +18,6 @@ sed -i 's/192.168.1.1/192.168.81.1/g' package/base-files/files/bin/config_genera
 
 # 修改默认端口
 #sed -i "s/ucidef_set_interface_lan 'eth0'/ucidef_set_interface_lan 'eth1'/g" package/base-files/files/etc/board.d/99-default_network
-sed -i "s/ucidef_set_interface_wan 'eth1'/ucidef_set_interface_wan 'eth3'/g" package/base-files/files/etc/board.d/99-default_network
+#sed -i "s/ucidef_set_interface_wan 'eth1'/ucidef_set_interface_wan 'eth3'/g" package/base-files/files/etc/board.d/99-default_network
 
 
