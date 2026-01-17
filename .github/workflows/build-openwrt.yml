@@ -110,7 +110,7 @@ jobs:
         make defconfig  # 应用配置
 
     - name: Setup ccache 缓存编译文件（减少重复编译）
-      uses: hendrikmuhs/ccache-action@v2
+      uses: hendrikmuhs/ccache-action@v1  # 修复：v2不存在，改为v1（最新稳定版）
       with:
         key: ${{ runner.os }}-openwrt-ccache
         max-size: 5G
