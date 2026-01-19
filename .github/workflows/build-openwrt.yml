@@ -25,33 +25,42 @@ env:
 jobs:
   build:
     runs-on: ubuntu-22.04
-
+    # 增加磁盘空间（解决编译空间不足问题）
+    env:
+      DEBIAN_FRONTEND: noninteractive
     steps:
     - name: Checkout 检出
-      uses: actions/checkout@main
+      uses: actions/checkout@v4  # 升级到v4，提升稳定性
 
     - name: Initialization environment 初始化环境
-      env:
-        DEBIAN_FRONTEND: noninteractive
       run: |
+        # 彻底清理无用包，释放更多空间
         sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
         sudo docker image prune --all --force
-        sudo -E apt-get -qq update
-        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
-        sudo -E apt-get -qq autoremove --purge
-        sudo -E apt-get -qq clean
+        sudo apt update -y
+        # 补充nginx和OpenClash编译所需依赖
+        sudo apt install -y ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
+        # 补充nginx编译依赖
+        sudo apt install -y libpcre2-dev libz-dev libssl-dev
+        # 补充OpenClash依赖
+        sudo apt install -y libyaml-dev libcap-dev
+        # 清理缓存
+        sudo apt autoremove -y --purge
+        sudo apt clean -y
         sudo timedatectl set-timezone "$TZ"
+        # 扩容临时空间（关键：解决编译空间不足）
+        sudo fallocate -l 20G /swapfile
+        sudo chmod 600 /swapfile
+        sudo mkswap /swapfile
+        sudo swapon /swapfile
+        # 创建工作目录
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
 
     - name: Free Disk Space 释放磁盘空间
       uses: jlumbroso/free-disk-space@main
       with:
-        # this might remove tools that are actually needed,
-        # if set to "true" but frees about 6 GB
         tool-cache: true
-        # all of these default to true, but feel free to set to
-        # "false" if necessary for your workflow
         android: true
         dotnet: true
         haskell: true
@@ -64,6 +73,8 @@ jobs:
         df -hT $PWD
         git clone $REPO_URL -b $REPO_BRANCH openwrt
         cd openwrt
+        # 拉取最新代码，避免编译错误
+        git pull
         COMMIT_MESSAGE=$(git show -s --date=short --format="更新内容: %s")
         echo "COMMIT_MESSAGE=$COMMIT_MESSAGE" >> $GITHUB_ENV
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
@@ -74,12 +85,22 @@ jobs:
         chmod +x $DIY_P1_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P1_SH
+        # 补充OpenClash和nginx的feeds（关键）
+        echo "src-git openclash https://github.com/vernesong/OpenClash.git" >> feeds.conf.default
+        echo "src-git nginx https://github.com/openwrt/packages.git;master/net/nginx" >> feeds.conf.default
 
     - name: Update & Install feeds 更新并安装源
       working-directory: ./openwrt
       run: |
         ./scripts/feeds update -a
+        # 优先安装nginx和luci-nginx，解决依赖冲突
+        ./scripts/feeds install -p packages nginx
+        ./scripts/feeds install -p luci luci-nginx
+        ./scripts/feeds install -p luci luci-app-openclash
+        # 安装所有feeds
         ./scripts/feeds install -a
+        # 修复feeds依赖（关键：解决ustream-ssl编译问题）
+        ./scripts/feeds install -f libustream-openssl
 
     - name: Load custom configuration 加载自定义配置
       run: |
@@ -88,13 +109,19 @@ jobs:
         chmod +x $DIY_P2_SH
         cd openwrt
         $GITHUB_WORKSPACE/$DIY_P2_SH
+        # 自动补全配置依赖（解决nginx/OpenClash依赖缺失）
+        make defconfig
+        # 检查配置并自动修复冲突
+        make menuconfig -o .config
 
     - name: Download package 下载文件包
       id: package
       run: |
         cd openwrt
         make defconfig
-        make download -j8
+        # 多线程下载，失败后重试
+        make download -j8 || make download -j1 V=s
+        # 清理损坏的下载文件
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
@@ -102,9 +129,15 @@ jobs:
       id: compile
       run: |
         cd openwrt
+        # 先单线程编译（便于排查错误），失败后重试
+        echo -e "1 thread compile (debug mode)"
+        make -j1 V=s || make -j1 V=sc
+        # 成功后再多线程编译（提升速度）
         echo -e "$(nproc) thread compile"
-        make -j$(nproc) || make -j1 || make -j1 V=s
+        make -j$(nproc)
+        # 设置编译状态
         echo "status=success" >> $GITHUB_OUTPUT
+        # 获取设备名称
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
@@ -118,13 +151,16 @@ jobs:
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
         cd openwrt/bin/targets/*/*
-        echo "KERNEL=$(cat *.manifest | grep ^kernel | cut -d- -f2 | tr -d ' ')" >> $GITHUB_ENV
+        # 获取内核版本
+        [ -f *.manifest ] && echo "KERNEL=$(cat *.manifest | grep ^kernel | cut -d- -f2 | tr -d ' ')" >> $GITHUB_ENV || echo "KERNEL=unknown" >> $GITHUB_ENV
+        # 清理无用文件，保留核心固件
         rm -rf packages *.buildinfo *.manifest *kernel.bin *rootfs.img.gz profiles.json sha256sums
+        # 保留VMDK/ISO等ESXi可用格式
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Upload firmware directory 上传固件目录
-      uses: actions/upload-artifact@main
+      uses: actions/upload-artifact@v4  # 升级到v4
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
         name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
@@ -138,28 +174,31 @@ jobs:
         echo "RELEASE_TAG=$RELEASE_TAG" >> $GITHUB_OUTPUT
         touch release.txt
         echo "status=success" >> $GITHUB_OUTPUT
+        echo "编译设备: N5105 (ESXi)" >> release.txt
         echo "内核版本: ${{ env.KERNEL }}" >> release.txt
-        echo "${COMMIT_MESSAGE}" >> release.txt
+        echo "更新内容: ${{ env.COMMIT_MESSAGE }}" >> release.txt
 
     - name: Upload firmware to release 上传固件到发布页
-      uses: softprops/action-gh-release@master
+      uses: softprops/action-gh-release@v2  # 升级到v2
       if: steps.tag.outputs.status == 'success' && !cancelled()
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: ${{ steps.tag.outputs.release_tag }}
+        tag_name: ${{ steps.tag.outputs.RELEASE_TAG }}
         body_path: release.txt
         files: ${{ env.FIRMWARE }}/*
+        draft: false
+        prerelease: false
 
     - name: Delete Old Workflows 删除旧工作流
-      uses: Mattraks/delete-workflow-runs@main
+      uses: Mattraks/delete-workflow-runs@v2  # 升级到v2
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         retain_days: 0
         keep_minimum_runs: 2
     
     - name: Remove old Releases 删除旧发布
-      uses: dev-drprasad/delete-older-releases@master
+      uses: dev-drprasad/delete-older-releases@v0.3.4  # 指定稳定版本
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       with:
         keep_latest: 3
