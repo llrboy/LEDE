@@ -1,4 +1,4 @@
-name: Build OpenWrt (x86_64 + nginx + ESXi)
+name: Build OpenWrt
 
 on:
   repository_dispatch:
