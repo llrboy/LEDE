@@ -10,11 +10,12 @@
 # Description: OpenWrt DIY script part 1 (Before Update feeds)
 #
 
-# 移除要替换的包
-rm -rf feeds/luci/themes/luci-theme-argon
-rm -rf feeds/packages/lang/golang
-git clone https://github.com/sbwml/packages_lang_golang feeds/packages/lang/golang
-# git clone https://github.com/sbwml/packages_lang_golang -b 23.x feeds/packages/lang/golang
+#!/bin/bash
+# diy-part1.sh - 升级feeds和添加自定义源
+sed -i 's/^#\(.*helloworld\)/\1/' feeds.conf.default
+./scripts/feeds update -a
+# 适配N5105的内核优化
+sed -i 's/CONFIG_KERNEL_PANIC_OOPS_PANIC=y/# CONFIG_KERNEL_PANIC_OOPS_PANIC is not set/' .config
 
 # 添加 onliner 插件
 git clone https://github.com/nhhqgirl/luci-app-onliner.git package/lean/luci-app-onliner
