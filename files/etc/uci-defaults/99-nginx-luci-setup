@@ -1,0 +1,30 @@
+#!/bin/sh
+
+# 创建日志目录
+mkdir -p /var/log/nginx
+
+# 生成自签名证书（仅当不存在时）
+if [ ! -f /etc/nginx/ssl/nginx.crt ] || [ ! -f /etc/nginx/ssl/nginx.key ]; then
+    mkdir -p /etc/nginx/ssl
+    if command -v px5g >/dev/null; then
+        echo "Generating self-signed SSL certificate..."
+        px5g rsa -days 3650 > /etc/nginx/ssl/nginx.key 2>/dev/null
+        px5g cert -days 3650 -subj "/CN=OpenWrt" > /etc/nginx/ssl/nginx.crt 2>/dev/null
+        chmod 600 /etc/nginx/ssl/nginx.key
+    fi
+fi
+
+# 启用并启动服务
+/etc/init.d/nginx enable
+/etc/init.d/fcgiwrap enable
+/etc/init.d/nginx start
+/etc/init.d/fcgiwrap start
+
+# 清除 uhttpd 残留
+/etc/init.d/uhttpd disable 2>/dev/null
+killall uhttpd 2>/dev/null
+
+# 标记已完成
+rm -f /etc/uci-defaults/99-nginx-luci-setup
+
+exit 0
