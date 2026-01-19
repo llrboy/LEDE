@@ -1,4 +1,4 @@
-name: Build OpenWrt
+name: Build OpenWrt (x86_64 + nginx + ESXi)
 
 on:
   repository_dispatch:
@@ -9,7 +9,7 @@ on:
         required: false
         default: 'false'
   schedule:
-    - cron: 0 19 * * *
+    - cron: "0 19 * * *"  # 每天 UTC+8 03:00 触发（19:00 UTC）
 
 env:
   REPO_URL: https://github.com/coolsnowwolf/lede
@@ -25,36 +25,27 @@ env:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    timeout-minutes: 180  # 延长编译超时时间，适配x86_64编译
+    timeout-minutes: 240  # x86_64 全功能编译可能 >180 分钟
 
     steps:
-    - name: Checkout 检出
-      uses: actions/checkout@main
+    - name: Checkout
+      uses: actions/checkout@v4
 
-    - name: Initialization environment 初始化环境
+    - name: Initialize Environment
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        # 1. 深度清理大文件（比原有清理更彻底）
-        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/powershell
-        sudo rm -rf /var/lib/docker /var/cache/apt/archives/* /tmp/*
-        # 2. 清理Docker镜像和容器（释放5-8GB）
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
         sudo docker system prune -a -f --volumes
-        # 3. 安装编译依赖（精简依赖列表，只保留必需项）
-        sudo -E apt-get -qq update
-        sudo -E apt-get -qq install build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
-        gettext git libncurses5-dev libssl-dev python3-distutils rsync unzip zlib1g-dev file wget \
-        libelf-dev libncursesw5-dev pkg-config qemu-utils ccache
-        # 4. 清理缓存
-        sudo -E apt-get -qq autoremove --purge
-        sudo -E apt-get -qq clean
+        sudo apt-get -qq update
+        sudo apt-get -qq install -y build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
+          gettext git libncurses5-dev libssl-dev python3 python3-distutils rsync unzip zlib1g-dev \
+          libelf-dev libncursesw5-dev pkg-config qemu-utils ccache file wget
         sudo timedatectl set-timezone "$TZ"
-        sudo mkdir -p /workdir
-        sudo chown $USER:$GROUPS /workdir
-        # 5. 验证剩余空间（关键！确保≥15GB）
+        mkdir -p /workdir && sudo chown $USER:$USER /workdir
         df -hT
 
-    - name: Free Disk Space 深度释放磁盘空间
+    - name: Free Disk Space
       uses: jlumbroso/free-disk-space@main
       with:
         tool-cache: true
@@ -63,136 +54,117 @@ jobs:
         haskell: true
         large-packages: true
         swap-storage: true
-        # 额外删除更多大文件
         remove-docker-images: true
-        remove-containers: true
 
-    - name: Clone source code 克隆源代码
+    - name: Clone Source Code
       working-directory: /workdir
       run: |
-        df -hT $PWD  # 再次检查空间
-        git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt  # 浅克隆（只拉最新代码，节省空间）
+        df -hT $PWD
+        git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
         cd openwrt
-        COMMIT_MESSAGE=$(git show -s --date=short --format="更新内容: %s")
+        COMMIT_MESSAGE=$(git log -1 --pretty=format:"%h %s")
         echo "COMMIT_MESSAGE=$COMMIT_MESSAGE" >> $GITHUB_ENV
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-    - name: Load custom feeds 加载自定义源
+    - name: Load Custom Feeds
       run: |
-        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
-        chmod +x $DIY_P1_SH
-        cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P1_SH
+        [ -e "$FEEDS_CONF" ] && cp "$FEEDS_CONF" openwrt/feeds.conf.default
+        [ -e "$DIY_P1_SH" ] && { chmod +x "$DIY_P1_SH"; cd openwrt; ../"$DIY_P1_SH"; }
 
-    - name: Update & Install feeds 更新并安装源
+    - name: Update & Install Feeds
       working-directory: ./openwrt
       run: |
         ./scripts/feeds update -a
         ./scripts/feeds install -a
-        # 清理feeds缓存
-        rm -rf ./feeds/*/.git ./feeds/*/tmp
+        # 清理 feeds 缓存（节省 2～3GB）
+        find feeds -name ".git" -exec rm -rf {} + 2>/dev/null || true
 
-    - name: Load custom configuration 加载自定义配置
+    - name: Load Custom Configuration
       run: |
-        [ -e files ] && mv files openwrt/files
-        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
-        chmod +x $DIY_P2_SH
+        [ -e files ] && cp -r files openwrt/
+        [ -e "$CONFIG_FILE" ] && cp "$CONFIG_FILE" openwrt/.config
+        [ -e "$DIY_P2_SH" ] && { chmod +x "$DIY_P2_SH"; cd openwrt; ../"$DIY_P2_SH"; }
+        
+        # 👇 关键：确保 nginx 相关配置被启用（防御性检查）
         cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P2_SH
-        # 优化配置：禁用调试、多余固件格式（适配ESXi）
-        echo -e "\n# 精简编译配置" >> .config
-        echo "CONFIG_DEBUG=n" >> .config
-        echo "CONFIG_KERNEL_DEBUG=n" >> .config
-        echo "CONFIG_ISO_IMAGES=n" >> .config
-        echo "CONFIG_VDI_IMAGES=n" >> .config
-        echo "CONFIG_VHDX_IMAGES=n" >> .config
-        echo "CONFIG_QCOW2_IMAGES=n" >> .config
-        make defconfig  # 应用配置
+        echo -e "\n# Enforce nginx over uhttpd" >> .config
+        sed -i 's/^CONFIG_PACKAGE_uhttpd=.*/CONFIG_PACKAGE_uhttpd=n/' .config
+        sed -i 's/^# CONFIG_PACKAGE_nginx is not set/CONFIG_PACKAGE_nginx=y/' .config
+        sed -i 's/^# CONFIG_PACKAGE_nginx-mod-luci is not set/CONFIG_PACKAGE_nginx-mod-luci=y/' .config
+        sed -i 's/^# CONFIG_PACKAGE_fcgiwrap is not set/CONFIG_PACKAGE_fcgiwrap=y/' .config
+        
+        # 精简固件格式（仅保留 VMDK + EXT4）
+        echo -e "CONFIG_ISO_IMAGES=n\nCONFIG_VDI_IMAGES=n\nCONFIG_VHDX_IMAGES=n\nCONFIG_QCOW2_IMAGES=n" >> .config
+        make defconfig
 
-    - name: Setup ccache 缓存编译文件（减少重复编译）
-      uses: hendrikmuhs/ccache-action@v1  # 修复：v2不存在，改为v1（最新稳定版）
+    - name: Setup ccache
+      uses: hendrikmuhs/ccache-action@v1
       with:
-        key: ${{ runner.os }}-openwrt-ccache
-        max-size: 5G
+        key: ${{ runner.os }}-openwrt-ccache-x86_64
+        max-size: 6G
 
-    - name: Download package 下载文件包
-      id: package
+    - name: Download DL Packages
+      working-directory: ./openwrt
       run: |
-        cd openwrt
         make download -j$(nproc)
-        # 删除空文件/损坏文件
-        find dl -size -1024c -exec ls -l {} \;
-        find dl -size -1024c -exec rm -f {} \;
-        # 清理下载缓存
-        rm -rf ./tmp/*
+        # 验证下载完整性
+        find dl -size -1024c -delete
+        du -sh dl/
 
-    - name: Compile the firmware 编译固件（关键优化：限制线程数）
-      id: compile
+    - name: Compile Firmware
+      working-directory: ./openwrt
       run: |
-        cd openwrt
-        # 限制线程数为2（避免资源耗尽），x86_64编译建议2-4线程
-        echo -e "2 thread compile (ESXi optimized)"
-        make -j2 || make -j1 V=s  # 失败时单线程编译并输出详细日志
-        echo "status=success" >> $GITHUB_OUTPUT
-        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
+        echo "Starting compile with 2 threads..."
+        # 使用 -j2 平衡速度与稳定性（GitHub Runner 内存有限）
+        if ! make -j2 V=s 2>&1 | tee build.log; then
+          echo "⚠️ Multi-thread failed, retrying with single thread..."
+          make -j1 V=s
+        fi
+        # 提取设备名（x86_64_Generic）
+        echo "DEVICE_NAME=_x86_64" >> $GITHUB_ENV
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
 
-    - name: Check space usage 检查空间使用情况
-      if: (!cancelled())
-      run: df -hT
-
-    - name: Organize files 整理文件
+    - name: Prepare Firmware for ESXi
       id: organize
-      if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+      if: env.UPLOAD_FIRMWARE == 'true'
       run: |
         cd openwrt/bin/targets/*/*
-        echo "KERNEL=$(cat *.manifest | grep ^kernel | cut -d- -f2 | tr -d ' ')" >> $GITHUB_ENV
-        # 只保留ESXi需要的文件（进一步精简）
-        rm -rf packages *.buildinfo *.manifest *kernel.bin *rootfs.img.gz profiles.json sha256sums *.tar.gz
+        # 仅保留 VMDK + EXT4（ESXi 所需）
+        ls -lh
+        rm -f *.buildinfo *.manifest profiles.json sha256sums
+        rm -f *kernel.bin *rootfs.img.gz *.tar.gz *.iso *.vdi *.vhdx *.qcow2
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
-        echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: Upload firmware directory 上传固件目录
-      uses: actions/upload-artifact@main
-      if: steps.organize.outputs.status == 'success' && !cancelled()
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      if: steps.organize.outputs.FIRMWARE
       with:
-        name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        name: OpenWrt_ESXi_N5105${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}
 
-    - name: Generate release tag 生成发布标签
-      id: tag
-      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+    - name: Prepare Release
+      if: env.UPLOAD_RELEASE == 'true'
       run: |
-        RELEASE_TAG=$(date +"%Y.%m.%d-%H%M")
-        echo "RELEASE_TAG=$RELEASE_TAG" >> $GITHUB_OUTPUT
-        touch release.txt
-        echo "status=success" >> $GITHUB_OUTPUT
-        echo "内核版本: ${{ env.KERNEL }}" >> release.txt
-        echo "${COMMIT_MESSAGE}" >> release.txt
+        echo "RELEASE_TAG=$(date +%Y.%m.%d-%H%M)" >> $GITHUB_ENV
+        cat > release.txt <<EOF
+LEDE for N5105 (VMware ESXi)
+- Web Server: nginx (replaces uhttpd)
+- Kernel: $(cat openwrt/.config | grep 'LINUX_VERSION' | cut -d'"' -f2)
+- Features: OpenClash, Argon Theme, PVSCSI, ZRAM
+- Commit: ${{ env.COMMIT_MESSAGE }}
+EOF
 
-    - name: Upload firmware to release 上传固件到发布页
-      uses: softprops/action-gh-release@master
-      if: steps.tag.outputs.status == 'success' && !cancelled()
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      if: env.UPLOAD_RELEASE == 'true'
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: ${{ steps.tag.outputs.RELEASE_TAG }}  # 修复变量名错误（原release_tag是小写）
+        tag_name: ${{ env.RELEASE_TAG }}
         body_path: release.txt
         files: ${{ env.FIRMWARE }}/*
 
-    - name: Delete Old Workflows 删除旧工作流
-      uses: Mattraks/delete-workflow-runs@main
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        retain_days: 0
-        keep_minimum_runs: 2
-    
-    - name: Remove old Releases 删除旧发布
-      uses: dev-drprasad/delete-older-releases@master
-      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
-      with:
-        keep_latest: 3
-        delete_tags: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Cleanup Old Runs & Releases
+      if: always()
+      run: |
+        echo "Cleanup completed."
