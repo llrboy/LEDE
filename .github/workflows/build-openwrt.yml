@@ -1,4 +1,4 @@
-name: Build OpenWrt
+name: Build OpenWrt (x86_64 + nginx + ESXi)
 
 on:
   repository_dispatch:
@@ -9,7 +9,7 @@ on:
         required: false
         default: 'false'
   schedule:
-    - cron: 0 19 * * *
+    - cron: "0 19 * * *"  # 每天 UTC+8 03:00 触发（19:00 UTC）
 
 env:
   REPO_URL: https://github.com/coolsnowwolf/lede
