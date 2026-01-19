@@ -1,47 +1,69 @@
 name: Update Checker
 
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 20 * * 0'  # 每周日 20:00 (UTC+8)
+
 env:
   REPO_URL: https://github.com/coolsnowwolf/lede
   REPO_BRANCH: master
 
-on:
-  workflow_dispatch:
-  schedule:
-  - cron: '0 20 * * 0'
-
 jobs:
   check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # 需要写权限来提交 .last_commit
 
     steps:
-    - name: Get Commit Hash
-      id: getHash
-      run: |
-        git clone --depth 1 $REPO_URL -b $REPO_BRANCH .
-        echo "commitHash=$(git rev-parse HEAD)" >> $GITHUB_ENV
-
-    - name: Compare Commit Hash
-      id: cacheHash
-      uses: actions/cache@main
+    - name: Checkout current repo
+      uses: actions/checkout@v4
       with:
-        path: .commitHash
-        key: HEAD-${{ env.commitHash }}
+        token: ${{ secrets.ACTIONS_TRIGGER_PAT }}  # 必须用 PAT 才能 push
 
-    - name: Save New Commit Hash
-      if: steps.cacheHash.outputs.cache-hit != 'true'
+    - name: Fetch latest upstream commit
       run: |
-        echo ${{ env.commitHash }} | tee .commitHash
+        git clone --depth=1 $REPO_URL -b $REPO_BRANCH lede-upstream
+        UPSTREAM_HASH=$(cd lede-upstream && git rev-parse HEAD)
+        echo "UPSTREAM_HASH=$UPSTREAM_HASH" >> $GITHUB_ENV
 
-    - name: Trigger build
-      if: steps.cacheHash.outputs.cache-hit != 'true'
-      uses: peter-evans/repository-dispatch@main
+    - name: Read last recorded commit
+      id: last_commit
+      run: |
+        if [ -f .last_commit ]; then
+          LAST_HASH=$(cat .last_commit)
+        else
+          LAST_HASH=""
+        fi
+        echo "LAST_HASH=$LAST_HASH" >> $GITHUB_ENV
+
+    - name: Compare and trigger build if changed
+      id: compare
+      run: |
+        if [ "$LAST_HASH" != "$UPSTREAM_HASH" ]; then
+          echo "New commit detected! Triggering build..."
+          echo "CHANGED=true" >> $GITHUB_ENV
+        else
+          echo "No update."
+          echo "CHANGED=false" >> $GITHUB_ENV
+        fi
+
+    - name: Save new commit hash
+      if: env.CHANGED == 'true'
+      run: |
+        echo "${{ env.UPSTREAM_HASH }}" > .last_commit
+        git config --global user.name "GitHub Actions"
+        git config --global user.email "actions@github.com"
+        git add .last_commit
+        git commit -m "chore: update last_commit to ${{ env.UPSTREAM_HASH }}"
+        git push origin HEAD
+
+    - name: Dispatch build event
+      if: env.CHANGED == 'true'
+      uses: peter-evans/repository-dispatch@v2
       with:
         token: ${{ secrets.ACTIONS_TRIGGER_PAT }}
         event-type: Source Code Update
 
-    - name: Delete Old Workflows
-      uses: Mattraks/delete-workflow-runs@main
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        retain_days: 2
-        keep_minimum_runs: 0
+    - name: Cleanup
+      run: rm -rf lede-upstream
