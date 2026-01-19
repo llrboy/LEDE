@@ -1,4 +1,9 @@
-
+#!/bin/bash
+# diy-part2.sh - 编译前最后优化
+# 修复nginx配置权限
+sed -i 's/^user .*/user root;/' package/feeds/packages/nginx/files/nginx.conf
+# 调整OpenClash默认配置
+sed -i 's/^CONFIG_OPENCLASH_COMPRESS_UPX=y/# CONFIG_OPENCLASH_COMPRESS_UPX is not set/' .config
 
 
 # x86 型号只显示 CPU 型号
