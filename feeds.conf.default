@@ -5,3 +5,5 @@ src-git telephony https://github.com/coolsnowwolf/telephony.git
 src-git vernesong https://github.com/vernesong/OpenClash
 #src-git sbwml https://github.com/sbwml/luci-app-mosdns
 
+#src-git smpackage https://github.com/kenzok8/small-package
+#src-git kenzo https://github.com/kenzok8/openwrt-packages
